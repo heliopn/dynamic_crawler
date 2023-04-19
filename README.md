@@ -1,1 +1,2 @@
-# Dynamic 
+# Red Crow
+A dynamic crawler
