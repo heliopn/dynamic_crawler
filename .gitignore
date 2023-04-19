@@ -1,3 +1,5 @@
-.db
-.sh
-.rdb
+*.db
+*.db-*
+*.sh
+*.rdb
+*.out
