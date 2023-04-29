@@ -2,6 +2,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from urllib.parse import urlparse, urljoin
 from nltk.tokenize import word_tokenize
+from nltk.sentiment import SentimentIntensityAnalyzer
 from urllib.parse import urlparse
 from nltk.corpus import stopwords
 from nltk.corpus import wordnet
@@ -26,9 +27,10 @@ class Crawler:
         self.index = {}
         self.conn = sqlite3.connect('crawler.db')
         self.cursor = self.conn.cursor()
+        self.sid = SentimentIntensityAnalyzer()
 
-        # Create a connection pool with a maximum of 5 connections
-        self.connection_pool = Queue(maxsize=5)
+        # # Create a connection pool with a maximum of 5 connections
+        # self.connection_pool = Queue(maxsize=5)
 
         self.url_queue = deque()
 
@@ -51,7 +53,8 @@ class Crawler:
             CREATE TABLE IF NOT EXISTS pages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 url TEXT UNIQUE,
-                content TEXT
+                content TEXT,
+                sentiment REAL DEFAULT 0.0
             )
         ''')
         self.cursor.execute('''
@@ -85,15 +88,16 @@ class Crawler:
         self.conn.commit()
 
     def create_connection(self):
-        connection = None
-        try:
-            connection = self.connection_pool.get(timeout=1)
-        except:
-            print("Connection pool exhausted")
-        return connection or sqlite3.connect('crawler.db')
+        # connection = None
+        # try:
+        #     connection = self.connection_pool.get(timeout=1)
+        # except:
+        #     print("Connection pool exhausted")
+        # return connection or sqlite3.connect('crawler.db')
+        return sqlite3.connect('crawler.db')
 
     def release_connection(self,connection):
-        self.connection_pool.put(connection)
+        connection.close()
 
     def _get_next_url(self):
         # Return the next URL in the queue, if there is one
@@ -141,6 +145,10 @@ class Crawler:
             # Extract the page content
             soup = BeautifulSoup(response.content, 'html.parser')
             content = soup.get_text()
+
+            # Get all text sentiment score
+            scores = sid.polarity_scores(content)
+
             # Get all the links on the page
             for link in soup.find_all('a'):
                 href = link.get('href')
@@ -148,8 +156,9 @@ class Crawler:
                     self._add_url_to_queue(url, href)
 
             # Add the page to the database
-            cursor.execute('INSERT OR IGNORE INTO pages (url, content) VALUES (?, ?)', (url, content))
+            cursor.execute('INSERT OR IGNORE INTO pages (url, content, sentiment) VALUES (?, ?, ?)', (url, content, scores['compound']))
             page_id = cursor.lastrowid
+
             # Get the words on the page and add them to the index
             words = self._get_words(content)
             for word in words:
@@ -212,7 +221,7 @@ class Crawler:
             self._crawl_page(url)
 
     """ SEARCH WITH INVERTED INDEX """
-    def search(self,query):
+    def search(self,query, threshold=None):
         words = self._preprocess(query)
         self.logger.info(f'Searching for {query}')
         conn = self.create_connection()
