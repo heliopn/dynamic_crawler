@@ -10,6 +10,7 @@ from nltk.stem.snowball import SnowballStemmer
 from bs4 import BeautifulSoup
 from typing import Tuple, List
 from collections import deque
+import mysql.connector
 from sqlite3 import Error
 from queue import Queue
 import threading
@@ -20,12 +21,21 @@ import string
 import nltk
 import time 
 import re
+import os
 
 class Crawler:
     def __init__(self):
+        self.mysql_user = os.getenv("MYSQL_USER")
+        self.mysql_pass = os.getenv("MYSQL_PASS")
+        self.mysql_datb = os.getenv("MYSQL_DATB")
         self.visited_urls = set()
         self.index = {}
-        self.conn = sqlite3.connect('crawler.db')
+        self.conn = mysql.connector.connect(
+            host="localhost",
+            user=self.mysql_user,
+            password=self.mysql_pass,
+            database=self.mysql_datb
+        )
         self.cursor = self.conn.cursor()
         self.sid = SentimentIntensityAnalyzer()
 
@@ -49,52 +59,58 @@ class Crawler:
         ch.setFormatter(formatter)
         self.logger.addHandler(ch)
 
+        # Create the pages table
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS pages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                url TEXT UNIQUE,
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                url VARCHAR(255) UNIQUE,
                 content TEXT,
-                sentiment REAL DEFAULT 0.0
+                sentiment FLOAT DEFAULT 0.0
             )
         ''')
+
+        # Create the words table
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS words (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                word TEXT UNIQUE
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                word VARCHAR(255) UNIQUE
             )
         ''')
+
+        # Create the word_occurrences table
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS word_occurrences (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                page_id INTEGER,
-                word_id INTEGER,
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                page_id INT,
+                word_id INT,
                 FOREIGN KEY(page_id) REFERENCES pages(id),
                 FOREIGN KEY(word_id) REFERENCES words(id)
             )
         ''')
 
-        # Create the inverted index table
+        # Create the inverted_index table
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS inverted_index (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                word_id INTEGER,
-                page_id INTEGER,
-                count INTEGER,
+                id INT PRIMARY KEY AUTO_INCREMENT,
+                word_id INT,
+                page_id INT,
+                count INT,
                 FOREIGN KEY(word_id) REFERENCES words(id),
                 FOREIGN KEY(page_id) REFERENCES pages(id)
             )
         ''')
 
         self.conn.commit()
+        self.conn.close()
 
     def create_connection(self):
-        # connection = None
-        # try:
-        #     connection = self.connection_pool.get(timeout=1)
-        # except:
-        #     print("Connection pool exhausted")
-        # return connection or sqlite3.connect('crawler.db')
-        return sqlite3.connect('crawler.db')
+        conn = mysql.connector.connect(
+            host="localhost",
+            user=self.mysql_user,
+            password=self.mysql_pass,
+            database=self.mysql_datb
+        )
+        return conn
 
     def release_connection(self,connection):
         connection.close()
@@ -117,8 +133,8 @@ class Crawler:
             self.url_queue.append(url)
 
     def _get_word_id(self, word, cursor):
-        cursor.execute('INSERT OR IGNORE INTO words (word) VALUES (?)', (word,))
-        cursor.execute('SELECT id FROM words WHERE word = ?', (word,))
+        cursor.execute('INSERT IGNORE INTO words (word) VALUES (%s)', (word,))
+        cursor.execute('SELECT id FROM words WHERE word = %s', (word,))
         return cursor.fetchone()[0]
 
     def _get_words(self, text):
@@ -147,7 +163,7 @@ class Crawler:
             content = soup.get_text()
 
             # Get all text sentiment score
-            scores = sid.polarity_scores(content)
+            scores = self.sid.polarity_scores(content)
 
             # Get all the links on the page
             for link in soup.find_all('a'):
@@ -156,7 +172,7 @@ class Crawler:
                     self._add_url_to_queue(url, href)
 
             # Add the page to the database
-            cursor.execute('INSERT OR IGNORE INTO pages (url, content, sentiment) VALUES (?, ?, ?)', (url, content, scores['compound']))
+            cursor.execute('INSERT IGNORE INTO pages (url, content, sentiment) VALUES (%s, %s, %s)', (url, content, scores['compound']))
             page_id = cursor.lastrowid
 
             # Get the words on the page and add them to the index
@@ -166,15 +182,15 @@ class Crawler:
                 if word in self.stop_words:
                     continue
                 word_id = self._get_word_id(word, cursor)
-                cursor.execute('INSERT INTO word_occurrences (page_id, word_id) VALUES (?, ?)', (page_id, word_id))
+                cursor.execute('INSERT INTO word_occurrences (page_id, word_id) VALUES (%s, %s)', (page_id, word_id))
                 # Check if the inverted index already contains an entry for this word/page combination
-                cursor.execute('SELECT id FROM inverted_index WHERE word_id = ? AND page_id = ?', (word_id, page_id))
+                cursor.execute('SELECT id FROM inverted_index WHERE word_id = %s AND page_id = %s', (word_id, page_id))
                 result = cursor.fetchone()
                 if result:
                     inverted_index_id = result[0]
-                    cursor.execute('UPDATE inverted_index SET count = count + 1 WHERE id = ?', (inverted_index_id,))
+                    cursor.execute('UPDATE inverted_index SET count = count + 1 WHERE id = %s', (inverted_index_id,))
                 else:
-                    cursor.execute('INSERT INTO inverted_index (word_id, page_id, count) VALUES (?, ?, 1)', (word_id, page_id))
+                    cursor.execute('INSERT INTO inverted_index (word_id, page_id, count) VALUES (%s, %s, 1)', (word_id, page_id))
 
             conn.commit()
             self.logger.info(f'Crawled {url}')
@@ -228,7 +244,14 @@ class Crawler:
         cursor = conn.cursor()
 
         # Get the page IDs for all pages that contain any of the words
-        cursor.execute('SELECT DISTINCT page_id FROM inverted_index WHERE word_id IN (SELECT id FROM words WHERE word IN (%s))' % ','.join(['?' for _ in words]), words)
+        if threshold is not None:
+            cursor.execute('SELECT DISTINCT page_id FROM inverted_index '
+               'JOIN pages ON inverted_index.page_id = pages.id '
+               'WHERE word_id IN (SELECT id FROM words WHERE word IN (%s)) '
+               'AND sentiment >= %s' % (','.join(['%s' for _ in words]), '%s'), words + [threshold])
+        else:
+            cursor.execute('SELECT DISTINCT page_id FROM inverted_index WHERE word_id IN (SELECT id FROM words WHERE word IN (%s))' % ','.join(['%s' for _ in words]), words)
+        
         results = cursor.fetchall()
 
         page_counts = {}
@@ -236,7 +259,7 @@ class Crawler:
             page_id = result[0]
             count = 0
             for word in words:
-                cursor.execute('SELECT count FROM inverted_index WHERE word_id = (SELECT id FROM words WHERE word = ?) AND page_id = ?', (word, page_id))
+                cursor.execute('SELECT count FROM inverted_index WHERE word_id = (SELECT id FROM words WHERE word = %s) AND page_id = %s', (word, page_id))
                 result = cursor.fetchone()
                 if result is not None:
                     count += result[0]
@@ -248,7 +271,7 @@ class Crawler:
         # Get the URLs for the top 10 pages and return them
         urls = []
         for page_id, count in sorted_pages[:10]:
-            cursor.execute('SELECT url FROM pages WHERE id = ?', (page_id,))
+            cursor.execute('SELECT url FROM pages WHERE id = %s', (page_id,))
             result = cursor.fetchone()
             if result is not None:
                 urls.append(result[0])
@@ -256,7 +279,7 @@ class Crawler:
 
         return urls[0]
 
-    def wn_search(self,query):
+    def wn_search(self,query, threshold=None):
         # Preprocess query
         stemmer = SnowballStemmer('english')
         words = [stemmer.stem(w.lower()) for w in query.split()]
@@ -286,7 +309,14 @@ class Crawler:
         cursor = conn.cursor()
 
         # Get the page IDs for all pages that contain any of the words
-        cursor.execute('SELECT DISTINCT page_id FROM inverted_index WHERE word_id IN (SELECT id FROM words WHERE word IN (%s))' % ','.join(['?' for _ in words]), words)
+        if threshold is not None:
+            cursor.execute('SELECT DISTINCT page_id FROM inverted_index '
+               'JOIN pages ON inverted_index.page_id = pages.id '
+               'WHERE word_id IN (SELECT id FROM words WHERE word IN (%s)) '
+               'AND sentiment >= %s' % (','.join(['%s' for _ in words]), '%s'), words + [threshold])
+        else:
+            cursor.execute('SELECT DISTINCT page_id FROM inverted_index WHERE word_id IN (SELECT id FROM words WHERE word IN (%s))' % ','.join(['%s' for _ in words]), words)
+        
         results = cursor.fetchall()
 
         page_counts = {}
@@ -294,7 +324,7 @@ class Crawler:
             page_id = result[0]
             count = 0
             for word in words:
-                cursor.execute('SELECT count FROM inverted_index WHERE word_id = (SELECT id FROM words WHERE word = ?) AND page_id = ?', (word, page_id))
+                cursor.execute('SELECT count FROM inverted_index WHERE word_id = (SELECT id FROM words WHERE word = %s) AND page_id = %s', (word, page_id))
                 result = cursor.fetchone()
                 if result is not None:
                     count += result[0]
@@ -306,7 +336,7 @@ class Crawler:
         # Get the URLs for the top 10 pages and return them
         urls = []
         for page_id, count in sorted_pages[:10]:
-            cursor.execute('SELECT url FROM pages WHERE id = ?', (page_id,))
+            cursor.execute('SELECT url FROM pages WHERE id = %s', (page_id,))
             result = cursor.fetchone()
             if result is not None:
                 urls.append(result[0])

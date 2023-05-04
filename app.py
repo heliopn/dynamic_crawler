@@ -42,18 +42,20 @@ def get_crawl_status(task_id):
 def search():
     data = request.get_json()
     query = data['query']
+    threshold = data['threshold']
     logging.debug(f'Search for url: {query}')
     app.logger.info('Received query: %s', query)
-    results = crawler.search(query)
+    results = crawler.search(query,threshold)
     return jsonify({'result': results}), 202
 
 @app.route('/wn_search', methods=['GET'])
 def wn_search():
     data = request.get_json()
     query = data['query']
+    threshold = data['threshold']
     logging.debug(f'Search wordnet for url: {query}')
     app.logger.info('Received query: %s', query)
-    results = crawler.wn_search(query)
+    results = crawler.wn_search(query,threshold)
     return jsonify({'result': results}), 202
 
 if __name__ == '__main__':
