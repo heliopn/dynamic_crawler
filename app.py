@@ -42,20 +42,45 @@ def get_crawl_status(task_id):
 def search():
     data = request.get_json()
     query = data['query']
-    threshold = data['threshold']
-    logging.debug(f'Search for url: {query}')
-    app.logger.info('Received query: %s', query)
-    results = crawler.search(query,threshold)
+    if 'threshold' in data:
+        threshold = data['threshold']
+        logging.debug(f'Search for url: {query}')
+        app.logger.info('Received query: %s', query)
+        results = crawler.search(query,threshold)
+    else:
+        logging.debug(f'Search for url: {query}')
+        app.logger.info('Received query: %s', query)
+        results = crawler.search(query)
     return jsonify({'result': results}), 202
 
 @app.route('/wn_search', methods=['GET'])
 def wn_search():
     data = request.get_json()
     query = data['query']
-    threshold = data['threshold']
-    logging.debug(f'Search wordnet for url: {query}')
-    app.logger.info('Received query: %s', query)
-    results = crawler.wn_search(query,threshold)
+    if 'threshold' in data:
+        threshold = data['threshold']
+        logging.debug(f'Search wordnet for url: {query}')
+        app.logger.info('Received query: %s', query)
+        results = crawler.wn_search(query,threshold)
+    else:
+        logging.debug(f'Search for url: {query}')
+        app.logger.info('Received query: %s', query)
+        results = crawler.search(query)
+    return jsonify({'result': results}), 202
+
+@app.route('/generate', methods=['GET'])
+def generate():
+    data = request.get_json()
+    query = data['query']
+    if 'threshold' in data:
+        threshold = data['threshold']
+        logging.debug(f'generate_content for url: {query}')
+        app.logger.info('Received query: %s', query)
+        results = crawler.generate_content(query,threshold)
+    else:
+        logging.debug(f'generate_content for url: {query}')
+        app.logger.info('Received query: %s', query)
+        results = crawler.generate_content(query)
     return jsonify({'result': results}), 202
 
 if __name__ == '__main__':

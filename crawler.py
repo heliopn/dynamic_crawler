@@ -2,6 +2,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from urllib.parse import urlparse, urljoin
 from nltk.tokenize import word_tokenize
+from nltk.tokenize import sent_tokenize
 from nltk.sentiment import SentimentIntensityAnalyzer
 from urllib.parse import urlparse
 from nltk.corpus import stopwords
@@ -14,6 +15,7 @@ import mysql.connector
 from sqlite3 import Error
 from queue import Queue
 import threading
+import markovify
 import requests
 import sqlite3
 import logging
@@ -343,3 +345,64 @@ class Crawler:
         conn.close()
 
         return urls[0]
+
+    """ GENERATE CONTENT """
+    def generate_content(self, query, threshold=None):
+        words = self._preprocess(query)
+        self.logger.info(f'Searching for {query}')
+        conn = self.create_connection()
+        cursor = conn.cursor()
+
+        # Get the page IDs for all pages that contain any of the words
+        if threshold is not None:
+            cursor.execute('SELECT DISTINCT page_id FROM inverted_index '
+               'JOIN pages ON inverted_index.page_id = pages.id '
+               'WHERE word_id IN (SELECT id FROM words WHERE word IN (%s)) '
+               'AND sentiment >= %s' % (','.join(['%s' for _ in words]), '%s'), words + [threshold])
+        else:
+            cursor.execute('SELECT DISTINCT page_id FROM inverted_index WHERE word_id IN (SELECT id FROM words WHERE word IN (%s))' % ','.join(['%s' for _ in words]), words)
+        
+        results = cursor.fetchall()
+
+        page_counts = {}
+        for result in results:
+            page_id = result[0]
+            count = 0
+            for word in words:
+                cursor.execute('SELECT count FROM inverted_index WHERE word_id = (SELECT id FROM words WHERE word = %s) AND page_id = %s', (word, page_id))
+                result = cursor.fetchone()
+                if result is not None:
+                    count += result[0]
+            page_counts[page_id] = count
+
+        # Sort the pages by the number of occurrences of the search words in each page
+        sorted_pages = sorted(page_counts.items(), key=lambda x: x[1], reverse=True)
+
+        # Get the URLs for the top 10 pages and return them
+        urls = []
+        for page_id, count in sorted_pages[:10]:
+            cursor.execute('SELECT url FROM pages WHERE id = %s', (page_id,))
+            result = cursor.fetchone()
+            if result is not None:
+                urls.append(result[0])
+        conn.close()
+
+        url = urls[0]
+        print(url)
+        # Fetch the content for each URL
+        conn = self.create_connection()
+        cursor = conn.cursor()
+        contents = []
+        cursor.execute('SELECT content FROM pages WHERE url = %s', (url,))
+        result = cursor.fetchone()
+        if result is not None:
+            contents.append(result[0])
+        conn.close()
+        # Concatenate the fetched contents
+        text = " ".join(contents)
+
+        # Generate a phrase using the Markov chain model
+        text_model = markovify.Text(text)
+        generated_content = text_model.make_sentence()
+
+        return generated_content
