@@ -4,3 +4,4 @@
 *.rdb
 *.out
 *.env
+*.pyc

@@ -20,6 +20,7 @@ import requests
 import sqlite3
 import logging
 import string
+import openai
 import nltk
 import time 
 import re
@@ -30,6 +31,8 @@ class Crawler:
         self.mysql_user = os.getenv("MYSQL_USER")
         self.mysql_pass = os.getenv("MYSQL_PASS")
         self.mysql_datb = os.getenv("MYSQL_DATB")
+        # openai.api_key = os.getenv("OPENAI_TOKEN")
+
         self.visited_urls = set()
         self.index = {}
         self.conn = mysql.connector.connect(
@@ -406,3 +409,18 @@ class Crawler:
         generated_content = text_model.make_sentence()
 
         return generated_content
+
+    """ GENERATE CONTENT WITH CHAT GPT"""
+    def chat_gpt(self, query, threshold=None):
+
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": query}
+            ]
+        )
+        # Extract the generated message from the API response
+        generated_message = response.choices[0].message.content
+
+        return generated_message

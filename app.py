@@ -83,5 +83,22 @@ def generate():
         results = crawler.generate_content(query)
     return jsonify({'result': results}), 202
 
+@app.route('/chatgpt', methods=['GET'])
+def chatgpt():
+    data = request.get_json()
+    query = data['query']
+    if 'threshold' in data:
+        threshold = data['threshold']
+        logging.debug(f'chat_gpt for url: {query}')
+        app.logger.info('Received query: %s', query)
+        results = crawler.chat_gpt(query,threshold)
+    else:
+        logging.debug(f'chat_gpt for url: {query}')
+        app.logger.info('Received query: %s', query)
+        results = crawler.chat_gpt(query)
+    return jsonify({'result': results}), 202
+
+
+
 if __name__ == '__main__':
     app.run(debug=True)
