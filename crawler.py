@@ -1,19 +1,20 @@
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+from nltk.sentiment import SentimentIntensityAnalyzer
+from nltk.stem.snowball import SnowballStemmer
+from transformers import pipeline, set_seed
 from urllib.parse import urlparse, urljoin
 from nltk.tokenize import word_tokenize
 from nltk.tokenize import sent_tokenize
-from nltk.sentiment import SentimentIntensityAnalyzer
-from urllib.parse import urlparse
 from nltk.corpus import stopwords
+from urllib.parse import urlparse
 from nltk.corpus import wordnet
-from nltk.stem.snowball import SnowballStemmer
-from bs4 import BeautifulSoup
 from typing import Tuple, List
+from bs4 import BeautifulSoup
 from collections import deque
-import mysql.connector
 from sqlite3 import Error
 from queue import Queue
+import mysql.connector
 import threading
 import markovify
 import requests
@@ -22,7 +23,7 @@ import logging
 import string
 import openai
 import nltk
-import time 
+import time
 import re
 import os
 
@@ -413,14 +414,10 @@ class Crawler:
     """ GENERATE CONTENT WITH CHAT GPT"""
     def chat_gpt(self, query, threshold=None):
 
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": query}
-            ]
-        )
+        
+        generator = pipeline('text-generation', model='gpt2')
+        set_seed(42)
         # Extract the generated message from the API response
-        generated_message = response.choices[0].message.content
+        generated_message = generator(query, max_length=30, num_return_sequences=5)
 
-        return generated_message
+        return generated_message[0]['generated_text']
